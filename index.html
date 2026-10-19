@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>수선 사다리타고 보물을 찾자</title>
+    <style>
+        /* 화면을 가득 채우고 스크롤바를 없애는 설정 */
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #f0f8ff;
+            font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
+            touch-action: none; /* 모바일에서 화면 밀림 방지 */
+        }
+        
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 상단 UI (제목, 버튼 등) 영역 */
+        #header-area {
+            flex-shrink: 0;
+            text-align: center;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 10px 5px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+
+        h1 {
+            font-size: 20px;
+            color: #333;
+            margin: 5px 0 10px 0;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 5px;
+        }
+        
+        input {
+            width: 45px;
+            font-size: 16px;
+            text-align: center;
+            border: 2px solid #87CEEB;
+            border-radius: 5px;
+            padding: 5px;
+        }
+        
+        button {
+            font-size: 15px;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            color: #333;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            transition: 0.1s;
+        }
+        button:active { transform: translateY(2px); }
+        .btn-start { background-color: #FFB6C1; }
+        .btn-start:active { background-color: #FF69B4; }
+        .btn-reset { background-color: #90EE90; }
+        .btn-reset:active { background-color: #3CB371; }
+        
+        .instruction {
+            font-size: 14px;
+            color: #d32f2f;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+        /* 게임 화면(캔버스)이 남은 공간을 모두 채우도록 설정 */
+        #canvas-container {
+            flex-grow: 1;
+            width: 100%;
+            position: relative;
+        }
+        
+        #gameCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: crosshair;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <!-- 상단 UI -->
+    <div id="header-area">
+        <h1>🪜 수선 사다리타고 보물을 찾자 💎</h1>
+        <div class="controls">
+            <label><b>수선의 개수:</b> <input type="number" id="lineCount" min="2" max="8" value="4"></label>
+            <button class="btn-start" onclick="startGame()">땅에서 수직 올리기</button>
+            <button class="btn-reset" onclick="resetGame()">다시하기</button>
+        </div>
+        <div class="instruction" id="msg">정확히 <b>90°</b>를 만들어 수선을 그려보세요!</div>
+    </div>
+    
+    <!-- 게임 캔버스 (전체 화면) -->
+    <div id="canvas-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const canvasContainer = document.getElementById('canvas-container');
+    const msg = document.getElementById('msg');
+    
+    let lines = [];
+    let rungs = [];
+    let treasureIndex = 0;
+    let isPlaying = false;
+    let lineCount = 4;
+    let selectedPoint = null; 
+    
+    // 화면 비율에 맞춘 주요 좌표
+    let topY = 120; // 선이 시작되는 상단 하늘 위치
+    let groundY = 0; // 땅 위치 (화면 크기에 따라 자동 계산)
+
+    // 화면 크기가 바뀔 때마다 캔버스 크기를 컨테이너에 꽉 맞추기
+    function resizeCanvas() {
+        canvas.width = canvasContainer.clientWidth;
+        canvas.height = canvasContainer.clientHeight;
+        
+        // 하늘과 땅의 위치 비율 조정
+        topY = 100; // 상단 여백
+        groundY = canvas.height * 0.8; // 전체 높이의 80% 지점이 땅
+        
+        // 세로선 X좌표 재계산
+        lines = [];
+        const spacing = canvas.width / (lineCount + 1);
+        for(let i = 0; i < lineCount; i++) {
+            lines.push(spacing * (i + 1));
+        }
+    }
+
+    // 브라우저 크기 조절이나 태블릿 가로/세로 회전 시 자동 대응
+    window.addEventListener('resize', () => {
+        if(!isPlaying) {
+            resizeCanvas();
+            drawScene();
+        }
+    });
+    
+    function startGame() {
+        lineCount = parseInt(document.getElementById('lineCount').value);
+        if(lineCount < 2) lineCount = 2;
+        if(lineCount > 8) lineCount = 8;
+        
+        treasureIndex = Math.floor(Math.random() * lineCount);
+        resetGame();
+    }
+    
+    function resetGame() {
+        rungs = [];
+        isPlaying = false;
+        selectedPoint = null;
+        msg.innerHTML = "점을 찍고 연결해 정확히 <b>90°</b> 수선을 만들어보세요!<br>원하는 번호(출발점)를 눌러 출발합니다.";
+        resizeCanvas();
+        drawScene();
+    }
+    
+    function drawScene() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // 1. 하늘 그리기 (그라데이션)
+        let skyGradient = ctx.createLinearGradient(0, 0, 0, groundY);
+        skyGradient.addColorStop(0, "#87CEEB");
+        skyGradient.addColorStop(1, "#E0F6FF");
+        ctx.fillStyle = skyGradient;
+        ctx.fillRect(0, 0, canvas.width, groundY);
+
+        // 2. 땅 속 그리기 (그라데이션)
+        let dirtGradient = ctx.createLinearGradient(0, groundY, 0, canvas.height);
+        dirtGradient.addColorStop(0, "#8B4513");
+        dirtGradient.addColorStop(1, "#654321");
+        ctx.fillStyle = dirtGradient;
+        ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+
+        // 구름 장식
+        ctx.font = "40px Arial";
+        ctx.fillText("☁️", canvas.width * 0.1, 60);
+        ctx.fillText("☁️", canvas.width * 0.8, 40);
+        ctx.fillText("☁️", canvas.width * 0.5, 70);
+        
+        // 잔디밭
+        ctx.fillStyle = "#228B22";
+        ctx.fillRect(0, groundY, canvas.width, 15);
+        
+        // 세로선 (수직)
+        for(let i = 0; i < lineCount; i++) {
+            let x = lines[i];
+            ctx.strokeStyle = "#FFF";
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(x, topY);
+            ctx.lineTo(x, groundY);
+            ctx.stroke();
+            
+            // 번호와 출발점(별)
+            ctx.font = "bold 22px Arial";
+            ctx.fillStyle = "#333";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(i + 1, x, topY - 40); // 1, 2, 3... 번호
+            
+            ctx.font = "35px Arial";
+            ctx.fillText("⭐", x, topY - 10);
+            
+            // 보물과 꽝 (땅 속에 배치)
+            if(i === treasureIndex) {
+                ctx.fillText("💎", x, groundY + 40);
+            } else {
+                ctx.fillText("🦴", x, groundY + 40);
+            }
+        }
+        
+        // 사용자가 그린 선들 (가로선 & 각도 표시)
+        for(let r of rungs) {
+            let x1 = lines[r.leftCol];
+            let y1 = r.yLeft;
+            let x2 = lines[r.leftCol + 1];
+            let y2 = r.yRight;
+            
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            
+            let dx = x2 - x1;
+            let dy = y2 - y1;
+            let lineAngleRad = Math.atan2(dy, dx);
+            
+            if(r.isPerp) {
+                ctx.strokeStyle = "#FFEB3B"; // 수선은 노란색
+                ctx.stroke();
+                
+                // 직각(90도) 표시 기호
+                ctx.strokeStyle = "#FFF";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(x1, y1 - 15);
+                ctx.lineTo(x1 + 15, y1 - 15);
+                ctx.lineTo(x1 + 15, y1);
+                ctx.stroke();
+                
+                // 90° 텍스트
+                ctx.fillStyle = "#FFF";
+                ctx.font = "bold 15px Arial";
+                ctx.fillText("90°", x1 + 25, y1 - 25);
+                
+            } else {
+                ctx.strokeStyle = "#FF9800"; // 비스듬한 선은 주황색
+                ctx.stroke();
+                
+                // 각도기 부채꼴 호 그리기
+                ctx.strokeStyle = "#FFF";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(x1, y1, 25, -Math.PI / 2, lineAngleRad, false);
+                ctx.stroke();
+                
+                // 몇 도인지 표시
+                let halfAngle = (-Math.PI / 2 + lineAngleRad) / 2;
+                let textX = x1 + 45 * Math.cos(halfAngle);
+                let textY = y1 + 45 * Math.sin(halfAngle);
+                
+                ctx.fillStyle = "#FFF";
+                ctx.font = "bold 15px Arial";
+                ctx.fillText(r.angle + "°", textX, textY);
+            }
+        }
+        
+        // 현재 선택된 점(빨간색 원)
+        if(selectedPoint) {
+            ctx.fillStyle = "#FF3366";
+            ctx.beginPath();
+            ctx.arc(lines[selectedPoint.col], selectedPoint.y, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+    
+    function handlePointerDown(e) {
+        if(isPlaying) return;
+        if(e.type === 'touchstart') e.preventDefault(); 
+        
+        const rect = canvas.getBoundingClientRect();
+        let clientX = e.clientX || (e.touches && e.touches[0].clientX);
+        let clientY = e.clientY || (e.touches && e.touches[0].clientY);
+        
+        const clickX = (clientX - rect.left) * (canvas.width / rect.width);
+        const clickY = (clientY - rect.top) * (canvas.height / rect.height);
+        
+        // 출발 별자리 클릭 (별 근처 클릭 시)
+        if(clickY < topY + 20) {
+            for(let i = 0; i < lineCount; i++) {
+                if(Math.abs(clickX - lines[i]) < 40) {
+                    playLadder(i);
+                    return;
+                }
+            }
+        }
+        
+        // 선 그리기 (점 찍기)
+        if(clickY >= topY && clickY <= groundY) {
+            let clickedCol = -1;
+            for(let i = 0; i < lineCount; i++) {
+                if(Math.abs(clickX - lines[i]) < 40) { // 터치 인식 범위 넓힘
+                    clickedCol = i;
+                    break;
+                }
+            }
+            
+            if(clickedCol !== -1) {
+                if(!selectedPoint) {
+                    selectedPoint = { col: clickedCol, y: clickY };
+                    drawScene();
+                } else {
+                    if(selectedPoint.col === clickedCol) {
+                        selectedPoint.y = clickY;
+                        drawScene();
+                    } 
+                    else if(Math.abs(selectedPoint.col - clickedCol) === 1) {
+                        let leftCol = Math.min(selectedPoint.col, clickedCol);
+                        let rightCol = Math.max(selectedPoint.col, clickedCol);
+                        let yLeft = (selectedPoint.col === leftCol) ? selectedPoint.y : clickY;
+                        let yRight = (clickedCol === rightCol) ? clickY : selectedPoint.y;
+                        
+                        // 각도 정밀 계산
+                        let dx = lines[rightCol] - lines[leftCol];
+                        let dy = yRight - yLeft;
+                        let lineAngleRad = Math.atan2(dy, dx);
+                        
+                        let angle = Math.round((lineAngleRad - (-Math.PI / 2)) * 180 / Math.PI);
+                        
+                        // 오차 허용 (88도~92도) -> 90도로 보정
+                        let isPerp = (angle >= 88 && angle <= 92);
+                        
+                        if(isPerp) {
+                            let avgY = (yLeft + yRight) / 2;
+                            yLeft = avgY;
+                            yRight = avgY; 
+                            angle = 90;
+                        }
+                        
+                        rungs.push({ leftCol, yLeft, yRight, isPerp, angle });
+                        selectedPoint = null; 
+                        drawScene();
+                    } else {
+                        selectedPoint = { col: clickedCol, y: clickY };
+                        drawScene();
+                    }
+                }
+            } else {
+                selectedPoint = null;
+                drawScene();
+            }
+        }
+    }
+    
+    canvas.addEventListener('mousedown', handlePointerDown);
+    canvas.addEventListener('touchstart', handlePointerDown, {passive: false});
+    
+    function playLadder(startCol) {
+        isPlaying = true;
+        selectedPoint = null;
+        drawScene();
+        
+        let currentCol = startCol;
+        let currentY = topY;
+        let path = [{x: lines[currentCol], y: currentY}];
+        
+        while(true) {
+            let nextRung = null;
+            let minY = Infinity;
+            let isGoingLeft = false;
+            
+            for(let r of rungs) {
+                if(!r.isPerp) continue; // 90도가 아니면 통과!
+                
+                if(r.yLeft > currentY + 2) {
+                    if(r.leftCol === currentCol && r.yLeft < minY) {
+                        minY = r.yLeft;
+                        nextRung = r;
+                        isGoingLeft = false;
+                    } else if(r.leftCol + 1 === currentCol && r.yLeft < minY) {
+                        minY = r.yLeft;
+                        nextRung = r;
+                        isGoingLeft = true; 
+                    }
+                }
+            }
+            
+            if(nextRung) {
+                path.push({x: lines[currentCol], y: nextRung.yLeft});
+                currentCol = isGoingLeft ? nextRung.leftCol : nextRung.leftCol + 1;
+                path.push({x: lines[currentCol], y: nextRung.yLeft});
+                currentY = nextRung.yLeft;
+            } else {
+                break;
+            }
+        }
+        path.push({x: lines[currentCol], y: groundY}); // 땅까지 내려감
+        
+        let step = 0;
+        let progress = 0;
+        
+        function animate() {
+            drawScene();
+            
+            ctx.strokeStyle = "#FF3366"; // 빨간색 이동 경로
+            ctx.lineWidth = 6;
+            ctx.beginPath();
+            ctx.moveTo(path[0].x, path[0].y);
+            for(let i = 1; i <= step; i++) {
+                ctx.lineTo(path[i].x, path[i].y);
+            }
+            
+            if(step < path.length - 1) {
+                let dx = path[step+1].x - path[step].x;
+                let dy = path[step+1].y - path[step].y;
+                ctx.lineTo(path[step].x + dx * progress, path[step].y + dy * progress);
+                ctx.stroke();
+                
+                ctx.font = "35px Arial";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "bottom";
+                ctx.fillText("🐒", path[step].x + dx * progress, path[step].y + dy * progress + 15);
+                
+                progress += 0.05; // 원숭이 이동 속도
+                if(progress >= 1) { progress = 0; step++; }
+                requestAnimationFrame(animate);
+            } else {
+                ctx.stroke();
+                ctx.font = "35px Arial";
+                ctx.fillText("🐒", path[step].x, path[step].y + 15);
+                setTimeout(() => {
+                    if(currentCol === treasureIndex) {
+                        msg.innerHTML = "🎉 와! <b>" + (startCol + 1) + "번</b>에서 출발해 보물을 찾았어요!";
+                    } else {
+                        msg.innerHTML = "😅 뼈다귀네요. <b>다시하기</b>를 누르거나 다른 번호에서 출발하세요.";
+                        isPlaying = false;
+                    }
+                }, 100);
+            }
+        }
+        animate();
+    }
+    
+    // 페이지 로딩 완료 시 게임 시작
+    window.onload = startGame;
+</script>
+</body>
+</html>
